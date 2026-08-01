@@ -39,6 +39,9 @@ local shootScriptEnabled = true
 local shootInProgress = false
 
 -- ===== FUNÇÃO DE POSIÇÃO DA MÃO =====
+-- configurable hand height used by getHandPosition
+local handHeight = 3.2
+
 local function getHandPosition()
     if not character or not character.Parent then
         character = player.Character or player.CharacterAdded:Wait()
@@ -49,10 +52,10 @@ local function getHandPosition()
     local look = humanoidRootPart.CFrame.LookVector
     local right = humanoidRootPart.CFrame.RightVector
     
-    -- Posição precisa da mão direita
+    -- Posição precisa da mão direita (usa `handHeight` configurável)
     return pos + Vector3.new(
         look.X * 1.8 + right.X * 0.3,
-        3.2,
+        handHeight,
         look.Z * 1.8 + right.Z * 0.3
     )
 end
@@ -73,9 +76,13 @@ local function firePerfect()
         }
     }
     
-    local success = pcall(function()
-        shootEvent:FireServer(unpack(args))
-    end)
+    local success = false
+    if shootEvent and typeof(shootEvent.FireServer) == "function" then
+        success = pcall(function()
+            -- Fire the single table argument directly
+            shootEvent:FireServer(args[1])
+        end)
+    end
     
     shootInProgress = false
     
@@ -130,15 +137,23 @@ local tpConnection = nil
 local tpKeybind = Enum.KeyCode.Q
 
 -- ===== FUNÇÃO PRINCIPAL DO TPWALK =====
-local function tpWalk()
-    local chr = player.Character
-    local hum = chr and chr:FindFirstChildOfClass("Humanoid")
-    
-    while tpwalking and chr and hum and hum.Parent do
-        local delta = RunService.Heartbeat:Wait()
+-- TPWalk implementation using RunService.Heartbeat connection for predictable timing
+local function startTPWalk()
+    if tpConnection then return end
+    tpConnection = RunService.Heartbeat:Connect(function(delta)
+        local chr = player.Character
+        local hum = chr and chr:FindFirstChildOfClass("Humanoid")
+        if not (tpwalking and chr and hum and hum.Parent) then return end
         if hum.MoveDirection.Magnitude > 0 then
             chr:TranslateBy(hum.MoveDirection * currentSpeed * delta * 10)
         end
+    end)
+end
+
+local function stopTPWalk()
+    if tpConnection then
+        tpConnection:Disconnect()
+        tpConnection = nil
     end
 end
 
@@ -147,14 +162,14 @@ local function toggleTPWalk()
     tpwalking = not tpwalking
     
     if tpwalking then
-        tpConnection = coroutine.create(tpWalk)
-        coroutine.resume(tpConnection)
+        startTPWalk()
         Library:Notify({
             Title = "🏃 TPWalk Ativado",
             Description = string.format("Velocidade: %.2f", currentSpeed),
             Time = 2,
         })
     else
+        stopTPWalk()
         Library:Notify({
             Title = "🏃 TPWalk Desativado",
             Time = 2,
@@ -242,18 +257,8 @@ ShootControlGroup:AddSlider("HandHeight", {
     Rounding = 1,
     Tooltip = "Ajuste a altura da posição da mão",
     Callback = function(Value)
-        -- Atualiza a função de posição
-        getHandPosition = function()
-            local pos = humanoidRootPart.Position
-            local look = humanoidRootPart.CFrame.LookVector
-            local right = humanoidRootPart.CFrame.RightVector
-            
-            return pos + Vector3.new(
-                look.X * 1.8 + right.X * 0.3,
-                Value,
-                look.Z * 1.8 + right.Z * 0.3
-            )
-        end
+        -- Atualiza apenas a altura utilizada por `getHandPosition`
+        handHeight = Value
     end
 })
 
@@ -475,7 +480,7 @@ local function createRGBBorderExternal(parent, thickness)
     })
     gradient.Parent = border
     
-    spawn(function()
+    task.spawn(function()
         while border.Parent do
             gradient.Rotation = (gradient.Rotation + 1) % 360
             task.wait(0.03)
